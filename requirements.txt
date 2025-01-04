@@ -8,3 +8,8 @@ opencv-python==4.10.0.84
 psutil==6.1.1
 tqdm==4.67.1
 scipy==1.14.1
+fastapi
+python-multipart
+uvicorn==0.24.0
+ray[serve]==2.40.0
+python-jose==3.3.0
