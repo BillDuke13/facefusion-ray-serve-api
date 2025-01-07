@@ -1,122 +1,138 @@
 """FastAPI and Ray Serve implementation of the FaceFusion service.
 
 This module provides the main service implementation combining FastAPI for HTTP
-handling with Ray Serve for distributed processing. It includes file management,
-task processing, and status tracking functionality.
+handling with Ray Serve for distributed processing.
+
+Typical usage example:
+    if __name__ == "__main__":
+        service = FaceFusionService()
+        serve.run(service, route_prefix="/v1/model/facefusion")
 """
 
+from __future__ import annotations
+
+import logging
+import sys
 import threading
 import time
 import uuid
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, Optional
-import logging
 from logging.handlers import RotatingFileHandler
-import sys
+from pathlib import Path
+from typing import Dict, List, Optional, Any
 
 import ray
-from fastapi import FastAPI, File, HTTPException, UploadFile, Request
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from ray import serve
-from ray.serve.deployment import Deployment
 
-from config import OUTPUT_DIR, UPLOAD_DIR, RAY_ADDRESS
-from facefusion_actor import FaceFusionActor
+from config import (
+    OUTPUT_DIR,
+    UPLOAD_DIR,
+    RAY_ADDRESS,
+    SERVICE_HOST,
+    SERVICE_PORT
+)
+from facefusion_job import run_facefusion_with_ray_job, get_task_status
 from models import FaceFusionResponse, TaskStatus
 
-def setup_logging() -> logging.Logger:
-    """Configures application-wide logging with file and console handlers.
+# Constants
+LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+LOG_DIR = Path("logs")
+LOG_FILE = LOG_DIR / "facefusion_service.log"
+MAX_LOG_SIZE = 10 * 1024 * 1024  # 10MB
+LOG_BACKUP_COUNT = 5
+CLEANUP_INTERVAL = 86400  # 1 day in seconds
+RETRY_INTERVAL = 3600    # 1 hour in seconds
+DEFAULT_CUTOFF_DAYS = 5
 
-    Returns:
-        logging.Logger: Configured logger instance.
-    """
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
+# Setup logging
+logger = logging.getLogger(__name__)
 
-    log_format = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+def setup_logging() -> None:
+    """Configure application-wide logging with file and console handlers."""
+    LOG_DIR.mkdir(exist_ok=True)
+    
+    formatter = logging.Formatter(LOG_FORMAT)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
 
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
-
+    # File handler
     file_handler = RotatingFileHandler(
-        log_dir / "facefusion_service.log",
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5
+        LOG_FILE,
+        maxBytes=MAX_LOG_SIZE,
+        backupCount=LOG_BACKUP_COUNT
     )
     file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(log_format)
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
 
+    # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(log_format)
-
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
-
-    return logger
-
-logger = setup_logging()
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
 
 class FileManager:
-    """Manages file operations for uploaded content and results.
+    """File operations manager for the FaceFusion service.
     
-    Provides static methods for saving uploaded files and cleaning up old files
-    to prevent disk space issues.
+    Handles file uploads and cleanup operations for the service.
     """
 
     @staticmethod
     async def save_upload_file(upload_file: UploadFile, uid: str) -> Path:
-        """Saves an uploaded file with a unique identifier.
+        """Save uploaded file with unique identifier.
 
         Args:
-            upload_file: FastAPI UploadFile object.
-            uid: Unique identifier to prepend to filename.
+            upload_file: The uploaded file object.
+            uid: Unique identifier for the file.
 
         Returns:
-            Path: Path where the file was saved.
+            Path to the saved file.
 
         Raises:
-            IOError: If file cannot be written to disk.
+            HTTPException: If file saving fails.
         """
         try:
             file_path = UPLOAD_DIR / f"{uid}_{upload_file.filename}"
-            logger.info(f"Saving uploaded file to: {file_path}")
-
-            with open(file_path, "wb") as buffer:
-                content = await upload_file.read()
-                buffer.write(content)
-
-            logger.debug(f"File saved successfully: {file_path}")
+            content = await upload_file.read()
+            
+            file_path.write_bytes(content)
+            logger.info(f"Saved file: {file_path}")
+            
             return file_path
-
+            
         except Exception as e:
-            logger.error(f"Error saving uploaded file: {str(e)}", exc_info=True)
-            raise
+            logger.error(f"File save error: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to save file: {str(e)}"
+            )
 
     @staticmethod
-    def cleanup_old_files(cutoff_days: int = 5) -> None:
-        """Removes files older than 'cutoff_days' in UPLOAD_DIR."""
+    def cleanup_old_files(cutoff_days: int = DEFAULT_CUTOFF_DAYS) -> None:
+        """Remove files older than the cutoff period.
+
+        Args:
+            cutoff_days: Number of days after which files should be removed.
+        """
         try:
-            logger.info(f"Starting cleanup of files older than {cutoff_days} days")
             cutoff = datetime.now() - timedelta(days=cutoff_days)
-
+            
             for file_path in UPLOAD_DIR.iterdir():
-                try:
-                    if file_path.is_file() and datetime.fromtimestamp(file_path.stat().st_mtime) < cutoff:
-                        logger.debug(f"Removing old file: {file_path}")
+                if not file_path.is_file():
+                    continue
+                    
+                mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+                if mtime < cutoff:
+                    try:
                         file_path.unlink()
-                except Exception as e:
-                    logger.error(f"Error processing file {file_path}: {str(e)}")
-
-            logger.info("File cleanup completed")
-
+                        logger.debug(f"Removed old file: {file_path}")
+                    except Exception as e:
+                        logger.error(f"Failed to remove {file_path}: {e}")
+                        
         except Exception as e:
-            logger.error(f"Error during file cleanup: {str(e)}", exc_info=True)
-
-app = FastAPI(title="FaceFusion Service")
+            logger.error(f"Cleanup error: {e}", exc_info=True)
 
 @serve.deployment(
     num_replicas=1,
@@ -125,46 +141,29 @@ app = FastAPI(title="FaceFusion Service")
     graceful_shutdown_wait_loop_s=120,
     graceful_shutdown_timeout_s=60
 )
-@serve.ingress(app)
+@serve.ingress(app := FastAPI(title="FaceFusion Service"))
 class FaceFusionService:
-    """Ray Serve deployment for the FaceFusion service.
+    """Ray Serve deployment for the FaceFusion service."""
 
-    Combines FastAPI routing with Ray actor management to provide a scalable
-    face fusion service. Includes health checking and file cleanup functionality.
-
-    Attributes:
-        face_fusion_actor: Reference to the Ray actor handling face fusion tasks.
-    """
-
-    def __init__(self):
-        """Initializes the service with a FaceFusionActor and cleanup thread."""
-        logger.info("Initializing FaceFusionService")
-
-        try:
-            self.face_fusion_actor = FaceFusionActor.remote()
-            logger.info("FaceFusionActor initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize FaceFusionActor: {str(e)}", exc_info=True)
-            raise
-
+    def __init__(self) -> None:
+        """Initialize service and start cleanup thread."""
         self._cleanup_thread = threading.Thread(
             target=self._cleanup_loop,
             daemon=True,
             name="CleanupThread"
         )
         self._cleanup_thread.start()
-        logger.info("Cleanup thread started")
+        logger.info("Service initialized")
 
     def _cleanup_loop(self) -> None:
-        """Background task for periodic cleanup."""
+        """Periodic cleanup task runner."""
         while True:
             try:
-                logger.info("Starting scheduled cleanup")
                 FileManager.cleanup_old_files()
-                time.sleep(86400)  # cleanup once a day
+                time.sleep(CLEANUP_INTERVAL)
             except Exception as e:
-                logger.error(f"Error in cleanup loop: {str(e)}", exc_info=True)
-                time.sleep(3600)  # Wait an hour before retrying after error
+                logger.error(f"Cleanup error: {e}")
+                time.sleep(RETRY_INTERVAL)
 
     @app.post("/swap", response_model=FaceFusionResponse)
     async def face_swap(
@@ -172,42 +171,39 @@ class FaceFusionService:
         source_image: UploadFile = File(...),
         target_image: UploadFile = File(...)
     ) -> FaceFusionResponse:
-        """Processes a face swap request with the provided images.
+        """Process face swap operation.
 
         Args:
-            source_image: Source face image file.
-            target_image: Target image/video file.
+            source_image: Source face image.
+            target_image: Target image/video.
 
         Returns:
-            FaceFusionResponse: Contains task ID and initial status.
+            FaceFusionResponse with task details.
 
         Raises:
-            HTTPException: If file processing fails.
+            HTTPException: If processing fails.
         """
         task_id = str(uuid.uuid4())
-        logger.info(f"Starting face swap task: {task_id}")
+        logger.info(f"Face swap task: {task_id}")
 
         try:
             source_path = await FileManager.save_upload_file(
-                source_image, f"{task_id}_source")
+                source_image, f"{task_id}_source"
+            )
             target_path = await FileManager.save_upload_file(
-                target_image, f"{task_id}_target")
-
-            logger.debug(f"Files saved - Source: {source_path}, Target: {target_path}")
-
+                target_image, f"{task_id}_target"
+            )
+            
             extension = Path(target_image.filename).suffix
             output_path = OUTPUT_DIR / f"{task_id}_output{extension}"
 
-            logger.debug(f"Submitting task to FaceFusionActor")
-            actor = FaceFusionActor.remote()  # create a new actor each request
-            actor.process_face_fusion.remote(
+            await run_facefusion_with_ray_job(
                 task_id,
                 str(source_path),
                 str(target_path),
                 str(output_path)
             )
 
-            logger.info(f"Task {task_id} submitted successfully")
             return FaceFusionResponse(
                 task_id=task_id,
                 status="processing",
@@ -215,49 +211,56 @@ class FaceFusionService:
             )
 
         except Exception as e:
-            logger.error(f"Error processing face swap task {task_id}: {str(e)}", exc_info=True)
+            logger.error(f"Face swap error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get("/status/{task_id}", response_model=TaskStatus)
     async def get_status(self, task_id: str) -> TaskStatus:
-        """Retrieve the status of a face fusion task."""
-        try:
-            logger.debug(f"Checking status for task: {task_id}")
-            status = await ray.get(self.face_fusion_actor.get_task_status.remote(task_id))
+        """Get task status.
 
-            response = TaskStatus(
+        Args:
+            task_id: Task identifier.
+
+        Returns:
+            TaskStatus with current status and output path if completed.
+
+        Raises:
+            HTTPException: If status check fails.
+        """
+        try:
+            status, logs = get_task_status(task_id)
+            output_files = list(OUTPUT_DIR.glob(f"{task_id}_output.*"))
+            output_path = output_files[0] if output_files else None
+
+            return TaskStatus(
                 task_id=task_id,
                 status=status,
-                result=str(OUTPUT_DIR / f"{task_id}_output.jpg") if status == "completed" else None
+                result=str(output_path) if status == "completed" and output_path else None,
+                logs=logs
             )
-            logger.debug(f"Task {task_id} status: {response}")
-            return response
 
         except Exception as e:
-            logger.error(f"Error getting status for task {task_id}: {str(e)}", exc_info=True)
+            logger.error(f"Status check error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get("/health")
     async def health_check(self) -> Dict[str, str]:
-        """Check service health."""
-        try:
-            return {"status": "ok"}
-        except Exception as e:
-            logger.error(f"Health check failed: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Service unhealthy")
+        """Check service health status."""
+        return {"status": "ok"}
 
     @app.get("/stats")
     async def service_stats(self) -> Dict[str, int]:
         """Get service statistics."""
         try:
-            size_bytes = sum(f.stat().st_size for f in UPLOAD_DIR.glob("*") if f.is_file())
+            size_bytes = sum(
+                f.stat().st_size 
+                for f in UPLOAD_DIR.glob("*") 
+                if f.is_file()
+            )
             return {"upload_dir_size": size_bytes}
         except Exception as e:
-            logger.error(f"Error getting service stats: {str(e)}", exc_info=True)
+            logger.error(f"Stats error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
-
-# Bind deployment
-facefusion_service = FaceFusionService.bind()
 
 if __name__ == "__main__":
     try:
@@ -288,7 +291,7 @@ if __name__ == "__main__":
 
         logger.info("Deploying FaceFusion Service")
         serve.run(
-            facefusion_service,
+            FaceFusionService.bind(),
             route_prefix="/v1/model/facefusion",
             name="facefusion_service"
         )

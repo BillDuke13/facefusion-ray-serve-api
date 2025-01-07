@@ -1,0 +1,24 @@
+name: facefusion-ray-serve-api
+channels:
+  - conda-forge
+  - nvidia
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - numpy=2.2.0
+  - opencv
+  - onnx=1.17.0
+  - onnxruntime-gpu
+  - scipy=1.14.1
+  - tqdm=4.67.1
+  - ray-serve=2.8.1
+  - fastapi
+  - uvicorn=0.24.0
+  - python-dotenv
+  - pip:
+    - filetype==1.2.0
+    - gradio==5.9.1
+    - gradio-rangeslider==0.0.8
+    - python-multipart
+    - python-jose==3.3.0
