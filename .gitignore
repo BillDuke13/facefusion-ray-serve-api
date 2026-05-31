@@ -173,6 +173,10 @@ cython_debug/
 # facefusion
 .jobs
 .assets
-output/
+outputs/
 uploads/
 logs/
+
+# Claude Code (personal, not shared)
+CLAUDE.local.md
+.claude/settings.local.json

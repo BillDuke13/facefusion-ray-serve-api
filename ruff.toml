@@ -1,0 +1,13 @@
+# Ruff config for this project's own modules.
+# The vendored upstream `facefusion/` package and its two top-level CLI shims
+# (`facefusion.py`, `install.py`) are excluded from format and lint; they are
+# verbatim upstream code (tab-indented) and must not be reformatted.
+# force-exclude makes ruff honor the exclude even when a path is passed explicitly
+# (e.g. by the format-on-edit hook).
+target-version = "py313"
+line-length = 88
+extend-exclude = ["facefusion", "facefusion.py", "install.py"]
+force-exclude = true
+
+[lint]
+select = ["E", "F", "I", "W"]

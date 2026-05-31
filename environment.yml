@@ -1,24 +1,61 @@
+# Conda environment for the FaceFusion Ray Serve API.
+#
+# Pure conda-forge: the Anaconda "defaults" channel is intentionally omitted
+# (and pinned out via `nodefaults`) to avoid the Anaconda channel Terms-of-Service
+# acceptance gate. conda-forge ships the full CUDA runtime stack, so the `nvidia`
+# channel is not needed.
+#
+# Targets Python 3.13 and an NVIDIA Blackwell GPU (e.g. RTX 5090, CUDA 13). The
+# onnxruntime spec forces a CUDA build so the GPU execution provider is available;
+# CPU-only hosts can relax it to a plain `onnxruntime` and set EXECUTION_PROVIDER=cpu.
+#
+# Version pins are deliberately loose so the solver picks a self-consistent, modern
+# set on Python 3.13 (the previous 3.11 / 2024-era pins do not resolve against the
+# CUDA-13 / Blackwell-capable onnxruntime and Ray Serve builds). setuptools + wheel
+# are required because Python 3.13 no longer bundles setuptools, and some pip
+# dependencies (e.g. python-jose) still build from a legacy setup.py sdist.
+#
+# gradio is held below 6 so its Starlette/ASGI requirement stays compatible with the
+# Ray Serve stack; gradio is only used by the vendored FaceFusion UI layer, not by
+# this headless service.
+#
+# NOTE: If `conda env create -f environment.yml` is blocked by a channel ToS
+# prompt, recreate the environment explicitly from conda-forge:
+#
+#   conda create -n facefusion-ray-serve-api --override-channels -c conda-forge \
+#     python=3.13 pip setuptools wheel numpy scipy onnx 'onnxruntime=*=*cuda*' \
+#     cuda-libraries cudnn opencv tqdm 'ray-serve>=2.55' fastapi uvicorn python-dotenv
+#   conda run -n facefusion-ray-serve-api pip install \
+#     filetype 'gradio>=5,<6' gradio-rangeslider python-multipart python-jose ruff pytest mypy
 name: facefusion-ray-serve-api
 channels:
   - conda-forge
-  - nvidia
-  - defaults
+  - nodefaults
 dependencies:
-  - python=3.11
+  - python=3.13
   - pip
-  - numpy=2.2.0
+  - setuptools
+  - wheel
+  - numpy
+  - scipy
+  - onnx
+  - "onnxruntime=*=*cuda*"
+  # Full CUDA runtime library set (cudart/nvrtc/cufft/curand/cusparse/cusolver/...)
+  # plus cuDNN, dlopened by onnxruntime's CUDA execution provider at runtime.
+  - cuda-libraries
+  - cudnn
   - opencv
-  - onnx=1.17.0
-  - onnxruntime-gpu
-  - scipy=1.14.1
-  - tqdm=4.67.1
-  - ray-serve=2.8.1
+  - tqdm
+  - "ray-serve>=2.55"
   - fastapi
-  - uvicorn=0.24.0
+  - uvicorn
   - python-dotenv
   - pip:
-    - filetype==1.2.0
-    - gradio==5.9.1
-    - gradio-rangeslider==0.0.8
-    - python-multipart
-    - python-jose==3.3.0
+      - filetype
+      - "gradio>=5,<6"
+      - gradio-rangeslider
+      - python-multipart
+      - python-jose
+      - ruff
+      - pytest
+      - mypy
