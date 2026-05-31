@@ -1,7 +1,7 @@
-"""Data models for the FaceFusion API.
+"""Pydantic response models for the FaceFusion API.
 
-This module defines Pydantic models used for request/response handling
-in the FaceFusion service API endpoints.
+The models intentionally mirror the public HTTP response payloads and avoid
+runtime-only implementation details.
 
 Typical usage example:
     response = FaceFusionResponse(
@@ -11,9 +11,8 @@ Typical usage example:
     )
 """
 
-from typing import List, Optional
+from pydantic import BaseModel, Field
 
-from pydantic import BaseModel
 
 class FaceFusionResponse(BaseModel):
     """Response model for face fusion operations.
@@ -34,12 +33,13 @@ class FaceFusionResponse(BaseModel):
 
     task_id: str
     status: str
-    output_path: Optional[str] = None
-    error: Optional[str] = None
+    output_path: str | None = None
+    error: str | None = None
+
 
 class TaskStatus(BaseModel):
     """Model representing task status information.
-    
+
     Attributes:
         task_id: Unique identifier for the task.
         status: Current processing status.
@@ -56,6 +56,5 @@ class TaskStatus(BaseModel):
 
     task_id: str
     status: str
-    result: Optional[str] = None
-    logs: List[str] = []
-
+    result: str | None = None
+    logs: list[str] = Field(default_factory=list)

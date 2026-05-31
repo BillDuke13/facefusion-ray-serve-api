@@ -1,51 +1,47 @@
-"""Configuration module for the FaceFusion service.
+"""Runtime configuration for the FaceFusion Ray Serve API.
 
-This module handles all configuration settings for the FaceFusion service,
-including path resolution, environment variable loading, and directory setup.
+Environment values are loaded once at import time. Relative paths are resolved
+from the repository root, while absolute paths are preserved by ``pathlib``.
 
 Typical usage example:
     from config import UPLOAD_DIR, OUTPUT_DIR
     uploaded_file = UPLOAD_DIR / "example.jpg"
 """
 
-from typing import Union
 import os
 from pathlib import Path
 
 import dotenv
 
-# Load environment variables
 dotenv.load_dotenv()
 
-# Type aliases
-PathLike = Union[str, Path]
+PathLike = str | Path
+
 
 def _get_env_path(env_key: str, default: str) -> Path:
-    """Gets path from environment variable with default fallback.
-    
+    """Return an environment-provided path or a repository-relative default.
+
     Args:
         env_key: Environment variable key.
-        default: Default value if env var not set.
-    
+        default: Relative default value used when the variable is unset.
+
     Returns:
-        Path object for the directory/file.
+        Resolved path value.
     """
     return BASE_DIR / os.getenv(env_key, default)
 
-# Base directory configuration
+
 BASE_DIR: Path = Path(__file__).resolve().parent
 
-# Storage directories configuration
 UPLOAD_DIR: Path = _get_env_path("UPLOAD_DIR", "uploads")
 OUTPUT_DIR: Path = _get_env_path("OUTPUT_DIR", "outputs")
 FACEFUSION_SCRIPT: Path = _get_env_path("FACEFUSION_PATH", "facefusion.py")
 
-# Ensure required directories exist
-UPLOAD_DIR.mkdir(exist_ok=True)
-OUTPUT_DIR.mkdir(exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Service configuration
-SERVICE_HOST: str = os.getenv("SERVICE_HOST", "localhost")
-SERVICE_PORT: int = int(os.getenv("SERVICE_PORT", "8000"))
+SERVICE_HOST: str = os.getenv("SERVICE_HOST", "0.0.0.0")
+SERVICE_PORT: int = int(os.getenv("SERVICE_PORT", "9999"))
 RAY_ADDRESS: str = os.getenv("RAY_ADDRESS", "auto")
 EXECUTION_PROVIDER: str = os.getenv("EXECUTION_PROVIDER", "cuda")
+LOG_LEVEL: str = os.getenv("LOG_LEVEL", "DEBUG").upper()
