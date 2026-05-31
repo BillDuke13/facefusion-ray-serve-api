@@ -43,7 +43,7 @@ conda create -n facefusion-ray-serve-api --override-channels -c conda-forge \
   python=3.13 pip setuptools wheel numpy scipy onnx 'onnxruntime=*=*cuda*' \
   cuda-libraries cudnn opencv tqdm 'ray-serve>=2.55' fastapi uvicorn python-dotenv
 conda run -n facefusion-ray-serve-api pip install \
-  filetype 'gradio>=5,<6' gradio-rangeslider python-multipart python-jose ruff pytest
+  filetype 'gradio>=5,<6' gradio-rangeslider python-multipart python-jose ruff pytest mypy
 conda activate facefusion-ray-serve-api
 ```
 
