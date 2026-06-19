@@ -1,6 +1,7 @@
 """Tests for Ray job submission state in ``facefusion_job``."""
 
 import asyncio
+import sys
 from collections.abc import Iterator
 
 import pytest
@@ -133,14 +134,25 @@ def test_run_subprocess_marks_task_completed(monkeypatch: pytest.MonkeyPatch) ->
         )
     )
 
-    assert captured_args[:6] == (
-        "ray",
-        "job",
-        "submit",
-        "--address=auto",
+    assert captured_args[:4] == ("ray", "job", "submit", "--address=auto")
+    separator = captured_args.index("--")
+    assert captured_args[separator:] == (
         "--",
-        "python",
+        sys.executable,
+        str(facefusion_job.FACEFUSION_SCRIPT),
+        "headless-run",
+        "-s",
+        "/tmp/source.jpg",
+        "-t",
+        "/tmp/target.jpg",
+        "-o",
+        "/tmp/output.jpg",
+        "--execution-providers",
+        "cuda",
     )
+    if "--runtime-env-json" in captured_args:
+        runtime_env = captured_args[captured_args.index("--runtime-env-json") + 1]
+        assert "LD_LIBRARY_PATH" in runtime_env
     assert "queued" in facefusion_job.task_logs["task-1"]
     assert "running" in facefusion_job.task_logs["task-1"]
     assert facefusion_job.tasks["task-1"] == "completed"

@@ -2,8 +2,8 @@ from typing import List, Optional
 
 import gradio
 
-from facefusion import state_manager, wording
-from facefusion.filesystem import list_directory
+from facefusion import state_manager, translator
+from facefusion.filesystem import get_file_name, resolve_file_paths
 from facefusion.processors.core import get_processors_modules
 from facefusion.uis.core import register_ui_component
 
@@ -14,7 +14,7 @@ def render() -> None:
 	global PROCESSORS_CHECKBOX_GROUP
 
 	PROCESSORS_CHECKBOX_GROUP = gradio.CheckboxGroup(
-		label = wording.get('uis.processors_checkbox_group'),
+		label = translator.get('uis.processors_checkbox_group'),
 		choices = sort_processors(state_manager.get_item('processors')),
 		value = state_manager.get_item('processors')
 	)
@@ -39,5 +39,11 @@ def update_processors(processors : List[str]) -> gradio.CheckboxGroup:
 
 
 def sort_processors(processors : List[str]) -> List[str]:
-	available_processors = [ file.get('name') for file in list_directory('facefusion/processors/modules') ]
-	return sorted(available_processors, key = lambda processor : processors.index(processor) if processor in processors else len(processors))
+	available_processors = [ get_file_name(file_path) for file_path in resolve_file_paths('facefusion/processors/modules') ]
+	current_processors = []
+
+	for processor in processors + available_processors:
+		if processor in available_processors and processor not in current_processors:
+			current_processors.append(processor)
+
+	return current_processors

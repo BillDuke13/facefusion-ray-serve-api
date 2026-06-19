@@ -1,15 +1,17 @@
+import os
 import shutil
 import subprocess
 import xml.etree.ElementTree as ElementTree
 from functools import lru_cache
-from typing import Any, List, Optional
+from typing import List, Optional
 
-from onnxruntime import get_available_providers, set_default_logger_severity
+import onnxruntime
 
 import facefusion.choices
-from facefusion.typing import ExecutionDevice, ExecutionProvider, ValueAndUnit
+from facefusion.filesystem import create_directory, is_directory
+from facefusion.types import ExecutionDevice, ExecutionProvider, InferenceOptionSet, InferenceProvider, ValueAndUnit
 
-set_default_logger_severity(3)
+onnxruntime.set_default_logger_severity(3)
 
 
 def has_execution_provider(execution_provider : ExecutionProvider) -> bool:
@@ -17,53 +19,114 @@ def has_execution_provider(execution_provider : ExecutionProvider) -> bool:
 
 
 def get_available_execution_providers() -> List[ExecutionProvider]:
-	inference_execution_providers = get_available_providers()
-	available_execution_providers = []
+	inference_session_providers = onnxruntime.get_available_providers()
+	available_execution_providers : List[ExecutionProvider] = []
 
 	for execution_provider, execution_provider_value in facefusion.choices.execution_provider_set.items():
-		if execution_provider_value in inference_execution_providers:
-			available_execution_providers.append(execution_provider)
+		if execution_provider_value in inference_session_providers:
+			index = facefusion.choices.execution_providers.index(execution_provider)
+			available_execution_providers.insert(index, execution_provider)
 
 	return available_execution_providers
 
 
-def create_inference_execution_providers(execution_device_id : str, execution_providers : List[ExecutionProvider]) -> List[Any]:
-	inference_execution_providers : List[Any] = []
+def create_inference_providers(execution_device_id : int, execution_providers : List[ExecutionProvider]) -> List[InferenceProvider]:
+	inference_providers : List[InferenceProvider] = []
+	cache_path = resolve_cache_path()
 
 	for execution_provider in execution_providers:
 		if execution_provider == 'cuda':
-			inference_execution_providers.append((facefusion.choices.execution_provider_set.get(execution_provider),
-			{
-				'device_id': execution_device_id
-			}))
-		if execution_provider == 'tensorrt':
-			inference_execution_providers.append((facefusion.choices.execution_provider_set.get(execution_provider),
+			inference_providers.append((facefusion.choices.execution_provider_set.get(execution_provider),
 			{
 				'device_id': execution_device_id,
-				'trt_engine_cache_enable': True,
-				'trt_engine_cache_path': '.caches',
-				'trt_timing_cache_enable': True,
-				'trt_timing_cache_path': '.caches',
-				'trt_builder_optimization_level': 5
+				'cudnn_conv_algo_search': resolve_cudnn_conv_algo_search()
 			}))
-		if execution_provider == 'openvino':
-			inference_execution_providers.append((facefusion.choices.execution_provider_set.get(execution_provider),
+
+		if execution_provider == 'tensorrt':
+			inference_option_set : InferenceOptionSet =\
 			{
-				'device_type': 'GPU' if execution_device_id == '0' else 'GPU.' + execution_device_id,
-				'precision': 'FP32'
-			}))
+				'device_id': execution_device_id
+			}
+			if is_directory(cache_path) or create_directory(cache_path):
+				inference_option_set.update(
+				{
+					'trt_engine_cache_enable': True,
+					'trt_engine_cache_path': cache_path,
+					'trt_timing_cache_enable': True,
+					'trt_timing_cache_path': cache_path,
+					'trt_builder_optimization_level': 4
+				})
+			inference_providers.append((facefusion.choices.execution_provider_set.get(execution_provider), inference_option_set))
+
 		if execution_provider in [ 'directml', 'rocm' ]:
-			inference_execution_providers.append((facefusion.choices.execution_provider_set.get(execution_provider),
+			inference_providers.append((facefusion.choices.execution_provider_set.get(execution_provider),
 			{
 				'device_id': execution_device_id
 			}))
+
+		if execution_provider == 'migraphx':
+			inference_option_set =\
+			{
+				'device_id': execution_device_id
+			}
+			if is_directory(cache_path) or create_directory(cache_path):
+				inference_option_set.update(
+				{
+					'migraphx_model_cache_dir': cache_path
+				})
+			inference_providers.append((facefusion.choices.execution_provider_set.get(execution_provider), inference_option_set))
+
 		if execution_provider == 'coreml':
-			inference_execution_providers.append(facefusion.choices.execution_provider_set.get(execution_provider))
+			inference_option_set =\
+			{
+				'SpecializationStrategy': 'FastPrediction'
+			}
+			if is_directory(cache_path) or create_directory(cache_path):
+				inference_option_set.update(
+				{
+					'ModelCacheDirectory': cache_path
+				})
+			inference_providers.append((facefusion.choices.execution_provider_set.get(execution_provider), inference_option_set))
+
+		if execution_provider == 'openvino':
+			inference_providers.append((facefusion.choices.execution_provider_set.get(execution_provider),
+			{
+				'device_type': resolve_openvino_device_type(execution_device_id),
+				'precision': 'FP32'
+			}))
+
+		if execution_provider == 'qnn':
+			inference_providers.append((facefusion.choices.execution_provider_set.get(execution_provider),
+			{
+				'device_id': execution_device_id,
+				'backend_type': 'htp'
+			}))
 
 	if 'cpu' in execution_providers:
-		inference_execution_providers.append(facefusion.choices.execution_provider_set.get('cpu'))
+		inference_providers.append(facefusion.choices.execution_provider_set.get('cpu'))
 
-	return inference_execution_providers
+	return inference_providers
+
+
+def resolve_cache_path() -> str:
+	return os.path.join('.caches', onnxruntime.get_version_string())
+
+
+def resolve_cudnn_conv_algo_search() -> str:
+	execution_devices = detect_static_execution_devices()
+	product_names = ('GeForce GTX 1630', 'GeForce GTX 1650', 'GeForce GTX 1660')
+
+	for execution_device in execution_devices:
+		if execution_device.get('product').get('name').startswith(product_names):
+			return 'DEFAULT'
+
+	return 'EXHAUSTIVE'
+
+
+def resolve_openvino_device_type(execution_device_id : int) -> str:
+	if execution_device_id == 0:
+		return 'GPU'
+	return 'GPU.' + str(execution_device_id)
 
 
 def run_nvidia_smi() -> subprocess.Popen[bytes]:
@@ -71,7 +134,7 @@ def run_nvidia_smi() -> subprocess.Popen[bytes]:
 	return subprocess.Popen(commands, stdout = subprocess.PIPE)
 
 
-@lru_cache(maxsize = None)
+@lru_cache()
 def detect_static_execution_devices() -> List[ExecutionDevice]:
 	return detect_execution_devices()
 
@@ -121,7 +184,7 @@ def detect_execution_devices() -> List[ExecutionDevice]:
 
 def create_value_and_unit(text : str) -> Optional[ValueAndUnit]:
 	if ' ' in text:
-		value, unit = text.split(' ')
+		value, unit = text.split()
 
 		return\
 		{

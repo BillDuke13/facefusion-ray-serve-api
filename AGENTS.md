@@ -14,29 +14,36 @@ Repository instructions for agents working on FaceFusion Ray Serve API.
 
 ## Environment
 
-Run Python commands inside the conda environment:
+The project uses uv for dependency management and virtualenv creation.
+
+Install all dependencies:
 
 ```bash
-conda activate facefusion-ray-serve-api
+uv sync
 ```
 
-The environment targets Python 3.13. Use the explicit conda-forge create command
-from `README.md` if `conda env create -f environment.yml` is blocked by a
-channel Terms-of-Service prompt.
+Python 3.13 is managed by uv. Run `uv python install 3.13` if the interpreter
+is not yet available. Tool configuration (ruff, mypy, pytest) lives in the
+`[tool.*]` sections of `pyproject.toml`.
+
+FaceFusion's `headless-run` pre-check requires the `ffmpeg` and `curl` system
+binaries on `PATH` (install them with the OS package manager; uv does not
+provide them). Without them every `/swap` job exits immediately.
 
 ## Quality Gates
 
 Use these commands for project-owned code:
 
 ```bash
-conda run -n facefusion-ray-serve-api python -m pytest -q
-conda run -n facefusion-ray-serve-api python -m ruff format --check config.py main_serve.py facefusion_job.py models.py tests conftest.py
-conda run -n facefusion-ray-serve-api python -m ruff check config.py main_serve.py facefusion_job.py models.py tests conftest.py
-conda run -n facefusion-ray-serve-api python -m mypy config.py main_serve.py facefusion_job.py models.py
+uv run python -m pytest -q
+uv run ruff format --check config.py main_serve.py facefusion_job.py models.py tests conftest.py
+uv run ruff check config.py main_serve.py facefusion_job.py models.py tests conftest.py
+uv run mypy config.py main_serve.py facefusion_job.py models.py
 ```
 
-`mypy.ini` intentionally excludes the vendored FaceFusion tree. `ruff.toml`
-also excludes vendored files and the launcher shims.
+The `[tool.mypy]` section of `pyproject.toml` intentionally excludes the
+vendored FaceFusion tree. The `[tool.ruff]` section also excludes vendored files
+and the launcher shims.
 
 ## Runtime Notes
 

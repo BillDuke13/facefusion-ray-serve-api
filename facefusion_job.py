@@ -15,7 +15,12 @@ Typical usage example:
 """
 
 import asyncio
+import glob
+import json
 import logging
+import os
+import sys
+import sysconfig
 
 import dotenv
 
@@ -28,6 +33,24 @@ dotenv.load_dotenv()
 TaskStatus = str  # Type alias for task status strings
 tasks: dict[str, TaskStatus] = {}
 task_logs: dict[str, list[str]] = {}
+
+
+def _nvidia_library_path() -> str:
+    """Return an ``LD_LIBRARY_PATH`` value for the FaceFusion subprocess.
+
+    The CUDA 13 ``nvidia-*`` wheels install their shared objects under
+    ``site-packages/nvidia/*/lib``. Unlike conda's ``$CONDA_PREFIX/lib``, a
+    uv/pip virtualenv does not place those on the loader path, so onnxruntime
+    cannot ``dlopen`` ``libcudart.so`` and CUDAExecutionProvider silently
+    disappears. The wheel ``lib`` directories are prepended to any inherited
+    ``LD_LIBRARY_PATH``. Returns an empty string on hosts without the wheels
+    (for example a CPU-only install).
+    """
+    lib_dirs = sorted(
+        glob.glob(os.path.join(sysconfig.get_paths()["purelib"], "nvidia", "*", "lib"))
+    )
+    existing = os.environ.get("LD_LIBRARY_PATH", "")
+    return os.pathsep.join(part for part in (*lib_dirs, existing) if part)
 
 
 async def run_facefusion_with_ray_job(
@@ -82,8 +105,28 @@ async def _run_subprocess(
         "job",
         "submit",
         "--address=auto",
+    ]
+
+    # Configure the job entrypoint's environment through the Ray runtime env:
+    # `ray job submit` runs the entrypoint on a worker that does not inherit
+    # this process's environment.
+    #   - CONDA_READY=1 short-circuits the vendored facefusion/conda.py setup so
+    #     it does not prepend $CONDA_PREFIX/lib ahead of our CUDA wheels (and
+    #     re-exec) when the service is launched from a conda-active shell.
+    #   - LD_LIBRARY_PATH points onnxruntime at the uv venv's nvidia/*/lib CUDA
+    #     shared objects, which a virtualenv does not place on the loader path.
+    env_vars = {"CONDA_READY": "1"}
+    library_path = _nvidia_library_path()
+    if library_path:
+        env_vars["LD_LIBRARY_PATH"] = library_path
+    command += ["--runtime-env-json", json.dumps({"env_vars": env_vars})]
+
+    command += [
         "--",
-        "python",
+        # Use the service interpreter so the subprocess resolves to this
+        # uv-managed virtualenv (which holds onnxruntime-gpu) instead of an
+        # ambient ``python`` on PATH.
+        sys.executable,
         str(FACEFUSION_SCRIPT),
         "headless-run",
         "-s",
@@ -92,7 +135,8 @@ async def _run_subprocess(
         target_path,
         "-o",
         output_path,
-        "--execution-provider",
+        # FaceFusion's flag is plural and accepts a list (nargs="+").
+        "--execution-providers",
         execution_provider,
     ]
 

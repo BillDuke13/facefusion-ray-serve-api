@@ -4,14 +4,12 @@ METADATA =\
 {
 	'name': 'FaceFusion',
 	'description': 'Industry leading face manipulation platform',
-	'version': '3.1.0',
-	'license': 'MIT',
+	'version': '3.6.1',
+	'license': 'OpenRAIL-AS',
 	'author': 'Henry Ruhs',
 	'url': 'https://facefusion.io'
 }
 
 
 def get(key : str) -> Optional[str]:
-	if key in METADATA:
-		return METADATA.get(key)
-	return None
+	return METADATA.get(key)
