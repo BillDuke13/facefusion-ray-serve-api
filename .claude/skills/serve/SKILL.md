@@ -1,27 +1,28 @@
 ---
 name: serve
-description: Start the FaceFusion Ray Serve service locally with the correct conda environment and smoke-test the API. Use when asked to run, start, launch, or verify the service is up.
+description: Start the FaceFusion Ray Serve service locally with the uv environment and smoke-test the API. Use when asked to run, start, launch, or verify the service is up.
 ---
 
 Start the service and confirm it is serving, then hand control back. Do not block the session on the foreground process.
 
 ## Steps
 
-1. **Conda env.** All commands run inside the project env:
-   `conda activate facefusion-ray-serve-api` (create it first with
-   `conda env create -f environment.yml` if it is missing).
+1. **Install dependencies.** Ensure the uv virtualenv is current:
+   ```bash
+   uv sync
+   ```
 
 2. **Ray cluster.** Startup calls `ray.init(address="auto")` by default, which
    needs a running cluster. Either:
-   - start one: `conda run -n facefusion-ray-serve-api ray start --head`, or
+   - start one: `uv run ray start --head`, or
    - set `RAY_ADDRESS=` (empty) in `.env` so `main_serve.py` self-starts a local
      cluster.
-   Check first with `conda run -n facefusion-ray-serve-api ray status`.
+   Check first with `uv run ray status`.
 
 3. **Launch in the background** (the process runs forever on `while True`),
    capturing output:
    ```bash
-   conda run -n facefusion-ray-serve-api python main_serve.py
+   uv run python main_serve.py
    ```
 
 4. **Wait for readiness.** Poll the health endpoint until it returns

@@ -1,0 +1,97 @@
+[project]
+name = "facefusion-ray-serve-api"
+version = "0.1.0"
+description = "FastAPI service on Ray Serve wrapping a vendored FaceFusion snapshot."
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    # --- Service ---
+    "ray[serve]==2.55.1",
+    "fastapi==0.137.2",
+    "uvicorn[standard]==0.49.0",
+    # Capped at 2.12.3: the highest pydantic that gradio<6 (the FaceFusion UI,
+    # exposed via the optional [ui] extra) accepts while still satisfying Ray
+    # Serve's pydantic>=2.12 floor. The headless service is unaffected.
+    "pydantic==2.12.3",
+    "python-dotenv==1.2.2",
+    "python-multipart==0.0.32",
+    # --- Vendored FaceFusion 3.6.1 runtime (non-UI) ---
+    # opencv -> headless wheel: the server never opens a GUI window.
+    "numpy==2.4.6",
+    "scipy==1.17.1",
+    "onnx==1.21.0",
+    "opencv-python-headless==4.13.0.92",
+    "tqdm==4.68.3",
+    # --- GPU: ONNX Runtime CUDA 13 for Blackwell (sm_120), Linux only ---
+    # onnxruntime-gpu's [cuda]/[cudnn] extras reference deprecated nvidia-*-cu13
+    # stubs (0.0.1) that cannot satisfy the CUDA-13 runtime, so the real wheels
+    # are pinned directly. NVIDIA dropped the -cu13 suffix for CUDA 13 (cuDNN
+    # is the exception and keeps -cu13).
+    "onnxruntime-gpu==1.27.0 ; sys_platform == 'linux'",
+    "nvidia-cuda-runtime~=13.0 ; sys_platform == 'linux'",
+    "nvidia-cuda-nvrtc~=13.0 ; sys_platform == 'linux'",
+    "nvidia-cufft~=12.0 ; sys_platform == 'linux'",
+    "nvidia-curand~=10.0 ; sys_platform == 'linux'",
+    "nvidia-cublas~=13.0 ; sys_platform == 'linux'",
+    "nvidia-cudnn-cu13~=9.0 ; sys_platform == 'linux'",
+]
+
+[project.optional-dependencies]
+# Vendored FaceFusion UI layer; not imported by the headless service.
+#   uv sync --extra ui
+ui = [
+    "gradio==5.50.0",
+    "gradio-rangeslider==0.0.8",
+]
+
+[dependency-groups]
+dev = [
+    "ruff==0.15.18",
+    "pytest==9.1.0",
+    "mypy==2.1.0",
+    "httpx==0.28.1",
+]
+
+[tool.uv]
+# Application project: manage the environment and dependencies, but do not
+# build/install the top-level service modules as a package.
+package = false
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+# Vendored upstream FaceFusion and its CLI shims are never formatted or linted.
+# force-exclude makes ruff honor this even when paths are passed explicitly
+# (for example by the format-on-edit hook).
+extend-exclude = ["facefusion", "facefusion.py", "install.py"]
+force-exclude = true
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+strict_optional = false
+# Vendored FaceFusion and the launcher shims are out of the strict gate; tests
+# are exercised by pytest, not mypy.
+exclude = [
+    "^facefusion/",
+    "^facefusion\\.py$",
+    "^install\\.py$",
+    "^tests/",
+]
+
+[[tool.mypy.overrides]]
+module = "facefusion.*"
+follow_imports = "skip"
+ignore_errors = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore:Using extra keyword arguments on `Field` is deprecated.*:pydantic.warnings.PydanticDeprecatedSince20:ray\\.serve\\._private\\.config",
+]

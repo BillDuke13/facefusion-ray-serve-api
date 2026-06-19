@@ -3,30 +3,53 @@ from typing import List
 import numpy
 
 from facefusion import state_manager
-from facefusion.typing import Face, FaceSelectorOrder, FaceSet, Gender, Race
+from facefusion.face_analyser import get_many_faces, get_one_face
+from facefusion.types import Face, FaceSelectorOrder, Gender, Race, Score, VisionFrame
 
 
-def find_similar_faces(faces : List[Face], reference_faces : FaceSet, face_distance : float) -> List[Face]:
-	similar_faces : List[Face] = []
+def select_faces(reference_vision_frame : VisionFrame, target_vision_frame : VisionFrame) -> List[Face]:
+	target_faces = get_many_faces([ target_vision_frame ])
 
-	if faces and reference_faces:
-		for reference_set in reference_faces:
-			if not similar_faces:
-				for reference_face in reference_faces[reference_set]:
-					for face in faces:
-						if compare_faces(face, reference_face, face_distance):
-							similar_faces.append(face)
-	return similar_faces
+	if state_manager.get_item('face_selector_mode') == 'many':
+		return sort_and_filter_faces(target_faces)
+
+	if state_manager.get_item('face_selector_mode') == 'one':
+		target_face = get_one_face(sort_and_filter_faces(target_faces))
+		if target_face:
+			return [ target_face ]
+
+	if state_manager.get_item('face_selector_mode') == 'reference':
+		reference_faces = get_many_faces([ reference_vision_frame ])
+		reference_faces = sort_and_filter_faces(reference_faces)
+		reference_face = get_one_face(reference_faces, state_manager.get_item('reference_face_position'))
+		if reference_face:
+			match_faces = find_match_faces([ reference_face ], target_faces, state_manager.get_item('reference_face_distance'))
+			return match_faces
+
+	return []
+
+
+def find_match_faces(reference_faces : List[Face], target_faces : List[Face], face_distance : float) -> List[Face]:
+	match_faces : List[Face] = []
+
+	for reference_face in reference_faces:
+		if reference_face:
+			for index, target_face in enumerate(target_faces):
+				if compare_faces(target_face, reference_face, face_distance):
+					match_faces.append(target_faces[index])
+
+	return match_faces
 
 
 def compare_faces(face : Face, reference_face : Face, face_distance : float) -> bool:
-	current_face_distance = calc_face_distance(face, reference_face)
+	current_face_distance = calculate_face_distance(face, reference_face)
+	current_face_distance = float(numpy.interp(current_face_distance, [ 0, 2 ], [ 0, 1 ]))
 	return current_face_distance < face_distance
 
 
-def calc_face_distance(face : Face, reference_face : Face) -> float:
-	if hasattr(face, 'normed_embedding') and hasattr(reference_face, 'normed_embedding'):
-		return 1 - numpy.dot(face.normed_embedding, reference_face.normed_embedding)
+def calculate_face_distance(face : Face, reference_face : Face) -> float:
+	if hasattr(face, 'embedding_norm') and hasattr(reference_face, 'embedding_norm'):
+		return 1 - numpy.dot(face.embedding_norm, reference_face.embedding_norm)
 	return 0
 
 
@@ -45,22 +68,38 @@ def sort_and_filter_faces(faces : List[Face]) -> List[Face]:
 
 def sort_faces_by_order(faces : List[Face], order : FaceSelectorOrder) -> List[Face]:
 	if order == 'left-right':
-		return sorted(faces, key = lambda face: face.bounding_box[0])
+		return sorted(faces, key = get_bounding_box_left)
 	if order == 'right-left':
-		return sorted(faces, key = lambda face: face.bounding_box[0], reverse = True)
+		return sorted(faces, key = get_bounding_box_left, reverse = True)
 	if order == 'top-bottom':
-		return sorted(faces, key = lambda face: face.bounding_box[1])
+		return sorted(faces, key = get_bounding_box_top)
 	if order == 'bottom-top':
-		return sorted(faces, key = lambda face: face.bounding_box[1], reverse = True)
+		return sorted(faces, key = get_bounding_box_top, reverse = True)
 	if order == 'small-large':
-		return sorted(faces, key = lambda face: (face.bounding_box[2] - face.bounding_box[0]) * (face.bounding_box[3] - face.bounding_box[1]))
+		return sorted(faces, key = get_bounding_box_area)
 	if order == 'large-small':
-		return sorted(faces, key = lambda face: (face.bounding_box[2] - face.bounding_box[0]) * (face.bounding_box[3] - face.bounding_box[1]), reverse = True)
+		return sorted(faces, key = get_bounding_box_area, reverse = True)
 	if order == 'best-worst':
-		return sorted(faces, key = lambda face: face.score_set.get('detector'), reverse = True)
+		return sorted(faces, key = get_face_detector_score, reverse = True)
 	if order == 'worst-best':
-		return sorted(faces, key = lambda face: face.score_set.get('detector'))
+		return sorted(faces, key = get_face_detector_score)
 	return faces
+
+
+def get_bounding_box_left(face : Face) -> float:
+	return face.bounding_box[0]
+
+
+def get_bounding_box_top(face : Face) -> float:
+	return face.bounding_box[1]
+
+
+def get_bounding_box_area(face : Face) -> float:
+	return (face.bounding_box[2] - face.bounding_box[0]) * (face.bounding_box[3] - face.bounding_box[1])
+
+
+def get_face_detector_score(face : Face) -> Score:
+	return face.score_set.get('detector')
 
 
 def filter_faces_by_gender(faces : List[Face], gender : Gender) -> List[Face]:

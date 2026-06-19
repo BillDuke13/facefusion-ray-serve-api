@@ -1,4 +1,5 @@
 import importlib
+import logging
 import os
 import warnings
 from types import ModuleType
@@ -7,10 +8,11 @@ from typing import Any, Dict, List, Optional
 import gradio
 from gradio.themes import Size
 
-from facefusion import logger, metadata, state_manager, wording
+import facefusion.uis.overrides as uis_overrides
+from facefusion import logger, metadata, state_manager, translator
 from facefusion.exit_helper import hard_exit
 from facefusion.filesystem import resolve_relative_path
-from facefusion.uis.typing import Component, ComponentName
+from facefusion.uis.types import Component, ComponentName
 
 UI_COMPONENTS: Dict[ComponentName, Component] = {}
 UI_LAYOUT_MODULES : List[ModuleType] = []
@@ -30,18 +32,16 @@ def load_ui_layout_module(ui_layout : str) -> Any:
 			if not hasattr(ui_layout_module, method_name):
 				raise NotImplementedError
 	except ModuleNotFoundError as exception:
-		logger.error(wording.get('ui_layout_not_loaded').format(ui_layout = ui_layout), __name__)
+		logger.error(translator.get('ui_layout_not_loaded').format(ui_layout = ui_layout), __name__)
 		logger.debug(exception.msg, __name__)
 		hard_exit(1)
 	except NotImplementedError:
-		logger.error(wording.get('ui_layout_not_implemented').format(ui_layout = ui_layout), __name__)
+		logger.error(translator.get('ui_layout_not_implemented').format(ui_layout = ui_layout), __name__)
 		hard_exit(1)
 	return ui_layout_module
 
 
 def get_ui_layouts_modules(ui_layouts : List[str]) -> List[ModuleType]:
-	global UI_LAYOUT_MODULES
-
 	if not UI_LAYOUT_MODULES:
 		for ui_layout in ui_layouts:
 			ui_layout_module = load_ui_layout_module(ui_layout)
@@ -73,8 +73,11 @@ def init() -> None:
 	os.environ['GRADIO_ANALYTICS_ENABLED'] = '0'
 	os.environ['GRADIO_TEMP_DIR'] = os.path.join(state_manager.get_item('temp_path'), 'gradio')
 
+	logging.getLogger('asyncio').setLevel(logging.CRITICAL)
 	warnings.filterwarnings('ignore', category = UserWarning, module = 'gradio')
-	gradio.processing_utils._check_allowed = lambda path, check_in_upload_folder: None
+	gradio.processing_utils._check_allowed = uis_overrides.mock
+	gradio.processing_utils.convert_video_to_playable_mp4 = uis_overrides.convert_video_to_playable_mp4
+	gradio.components.Number.raise_if_out_of_bounds = uis_overrides.mock
 
 
 def launch() -> None:
@@ -194,4 +197,4 @@ def get_theme() -> gradio.Theme:
 
 def get_css() -> str:
 	overrides_css_path = resolve_relative_path('uis/assets/overrides.css')
-	return open(overrides_css_path, 'r').read()
+	return open(overrides_css_path).read()

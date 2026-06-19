@@ -12,6 +12,17 @@ Typical usage example:
 
 from __future__ import annotations
 
+# ruff: noqa: E402 -- the os.environ.setdefault below must run before `import ray`
+# (RAY_ENABLE_UV_RUN_RUNTIME_ENV is read once at ray import time), which pushes the
+# remaining imports past the top of the module.
+import os
+
+# Ray's uv-run integration relaunches Serve replica workers via `uv run` from the
+# Ray session directory, where this project's `ray` is not importable, so replicas
+# crash with ModuleNotFoundError. Disable it before importing ray so workers use
+# this interpreter (the uv virtualenv) directly.
+os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
+
 import logging
 import sys
 import threading
@@ -24,6 +35,7 @@ from pathlib import Path
 import ray
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from ray import serve
+from ray.serve.config import ProxyLocation
 
 from config import (
     LOG_LEVEL,
@@ -300,11 +312,8 @@ if __name__ == "__main__":
 
         logger.info("Starting Ray Serve")
         serve.start(
-            http_options={
-                "host": SERVICE_HOST,
-                "port": SERVICE_PORT,
-                "location": "EveryNode",
-            }
+            proxy_location=ProxyLocation.EveryNode,
+            http_options={"host": SERVICE_HOST, "port": SERVICE_PORT},
         )
 
         logger.info("Deploying FaceFusion Service")

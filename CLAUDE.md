@@ -7,8 +7,8 @@ agents.
 ## What This Is
 
 FaceFusion Ray Serve API is a FastAPI service deployed through Ray Serve. It
-wraps a vendored FaceFusion snapshot and exposes `/swap`, `/status/{task_id}`,
-`/health`, and `/stats` under `/v1/model/facefusion`.
+wraps a vendored FaceFusion 3.6.1 snapshot and exposes `/swap`,
+`/status/{task_id}`, `/health`, and `/stats` under `/v1/model/facefusion`.
 
 Project-owned code is limited to the top-level service modules:
 
@@ -24,16 +24,15 @@ the task is explicitly to refresh the vendor snapshot.
 
 ## Environment
 
-Run Python commands inside the conda environment:
+The project uses uv. Install all runtime and development dependencies with:
 
 ```bash
-conda activate facefusion-ray-serve-api
+uv sync
 ```
 
-The environment targets Python 3.13 and a conda-forge stack. If `conda env
-create -f environment.yml` is blocked by a channel Terms-of-Service prompt, use
-the explicit `conda create --override-channels -c conda-forge ...` command from
-`README.md`.
+Python 3.13 is managed by uv (run `uv python install 3.13` if needed). There is
+no conda environment. Tool configuration (ruff, mypy, pytest) lives in the
+`[tool.*]` sections of `pyproject.toml`.
 
 The default execution provider is CUDA:
 
@@ -41,19 +40,29 @@ The default execution provider is CUDA:
 EXECUTION_PROVIDER=cuda
 ```
 
-For CPU-only hosts, install a CPU `onnxruntime` package and set:
+The GPU stack is pure PyPI: `onnxruntime-gpu` plus `nvidia-*` CUDA 13 wheels.
+Because a uv virtualenv does not place those CUDA shared objects on the system
+loader path, the service automatically injects `LD_LIBRARY_PATH` (pointing to
+the venv's `nvidia/*/lib` directories) into the FaceFusion Ray job environment.
+On a multi-node Ray cluster, every worker must have the same uv environment and
+CUDA libraries present.
+
+For CPU-only hosts, supply a CPU `onnxruntime` package and set:
 
 ```bash
 EXECUTION_PROVIDER=cpu
 ```
+
+Note that the default dependency set pins a CUDA build of `onnxruntime-gpu`; a
+CPU host needs that replaced with a CPU `onnxruntime` package.
 
 ## Run
 
 With an existing Ray cluster:
 
 ```bash
-ray start --head
-python main_serve.py
+uv run ray start --head
+uv run python main_serve.py
 ```
 
 The default base URL is:
@@ -72,17 +81,15 @@ Runtime notes:
 
 ## Quality Gates
 
-Run the gates inside the conda environment:
-
 ```bash
-conda run -n facefusion-ray-serve-api python -m pytest -q
-conda run -n facefusion-ray-serve-api python -m ruff format --check config.py main_serve.py facefusion_job.py models.py tests conftest.py
-conda run -n facefusion-ray-serve-api python -m ruff check config.py main_serve.py facefusion_job.py models.py tests conftest.py
-conda run -n facefusion-ray-serve-api python -m mypy config.py main_serve.py facefusion_job.py models.py
+uv run python -m pytest -q
+uv run ruff format --check config.py main_serve.py facefusion_job.py models.py tests conftest.py
+uv run ruff check config.py main_serve.py facefusion_job.py models.py tests conftest.py
+uv run mypy config.py main_serve.py facefusion_job.py models.py
 ```
 
-Use `ruff format` and `ruff check --fix` for project-owned files only. Do not run
-bare `mypy .`; it would pull in the vendored FaceFusion tree.
+Use `ruff format` and `ruff check --fix` for project-owned files only. Do not
+run bare `mypy .`; it would pull in the vendored FaceFusion tree.
 
 ## Architecture Notes
 
