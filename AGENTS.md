@@ -26,6 +26,10 @@ Python 3.13 is managed by uv. Run `uv python install 3.13` if the interpreter
 is not yet available. Tool configuration (ruff, mypy, pytest) lives in the
 `[tool.*]` sections of `pyproject.toml`.
 
+FaceFusion's `headless-run` pre-check requires the `ffmpeg` and `curl` system
+binaries on `PATH` (install them with the OS package manager; uv does not
+provide them). Without them every `/swap` job exits immediately.
+
 ## Quality Gates
 
 Use these commands for project-owned code:

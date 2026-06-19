@@ -21,6 +21,10 @@ should be treated as vendored code.
 
 - uv (manages the virtualenv and Python interpreter).
 - Python 3.13 (installed by uv; run `uv python install 3.13` if needed).
+- System binaries `ffmpeg` and `curl` on `PATH`. FaceFusion's `headless-run`
+  pre-check fails without them, so each `/swap` job would exit immediately.
+  Install them with your OS package manager (the conda stack pulled them in
+  before; uv does not).
 - NVIDIA GPU with CUDA support for the default `EXECUTION_PROVIDER=cuda`.
   The project targets CUDA 13 (e.g. RTX 5090). GPU dependencies are
   `onnxruntime-gpu` plus `nvidia-*` CUDA 13 wheels from PyPI.

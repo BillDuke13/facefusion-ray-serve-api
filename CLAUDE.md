@@ -34,6 +34,11 @@ Python 3.13 is managed by uv (run `uv python install 3.13` if needed). There is
 no conda environment. Tool configuration (ruff, mypy, pytest) lives in the
 `[tool.*]` sections of `pyproject.toml`.
 
+FaceFusion's `headless-run` pre-check requires the `ffmpeg` and `curl` system
+binaries on `PATH`. Install them with the OS package manager (the conda stack
+provided them before; uv does not). Without them every `/swap` job exits
+immediately.
+
 The default execution provider is CUDA:
 
 ```bash

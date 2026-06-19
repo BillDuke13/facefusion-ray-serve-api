@@ -107,16 +107,19 @@ async def _run_subprocess(
         "--address=auto",
     ]
 
-    # Hand the CUDA shared-object directories to the job entrypoint. ``ray job
-    # submit`` runs the entrypoint on a worker that does not inherit this
-    # process's environment, so LD_LIBRARY_PATH must travel through the Ray
-    # runtime env rather than os.environ.
+    # Configure the job entrypoint's environment through the Ray runtime env:
+    # `ray job submit` runs the entrypoint on a worker that does not inherit
+    # this process's environment.
+    #   - CONDA_READY=1 short-circuits the vendored facefusion/conda.py setup so
+    #     it does not prepend $CONDA_PREFIX/lib ahead of our CUDA wheels (and
+    #     re-exec) when the service is launched from a conda-active shell.
+    #   - LD_LIBRARY_PATH points onnxruntime at the uv venv's nvidia/*/lib CUDA
+    #     shared objects, which a virtualenv does not place on the loader path.
+    env_vars = {"CONDA_READY": "1"}
     library_path = _nvidia_library_path()
     if library_path:
-        command += [
-            "--runtime-env-json",
-            json.dumps({"env_vars": {"LD_LIBRARY_PATH": library_path}}),
-        ]
+        env_vars["LD_LIBRARY_PATH"] = library_path
+    command += ["--runtime-env-json", json.dumps({"env_vars": env_vars})]
 
     command += [
         "--",
